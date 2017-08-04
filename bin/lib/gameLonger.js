@@ -119,8 +119,10 @@ class Game{
 	}
 
 	addToBlacklist(name) {
-		debug(`addToBlacklist: name=${name}`);
-		return this.blacklist.push( name.toLowerCase() );
+		if(name !== undefined){
+			debug(`addToBlacklist: name=${name}`);
+			return this.blacklist.push( name.toLowerCase() );
+		}
 	};
 	isBlacklisted(name) { return this.blacklist.indexOf( name.toLowerCase() ) > -1; };
 	filterOutBlacklisted(names) { return names.filter( name => {return !this.isBlacklisted(name);}) };
@@ -237,15 +239,9 @@ class Game{
 		};
 
 		let seedPerson = undefined;
-		if(
-				 this.variant === GAME_VARIANT.any_seed
-			|| this.variant === GAME_VARIANT.any_seed_kill_answer
-		){
+		if(this.variant === GAME_VARIANT.any_seed || this.variant === GAME_VARIANT.any_seed_kill_answer){
 				seedPerson = this.pickNameFromTopFewCandidates();
-		} else if(
-				 this.variant === GAME_VARIANT.seed_from_answer
-			|| this.variant === GAME_VARIANT.seed_from_answer_or_any
-		) {
+		} else if(this.variant === GAME_VARIANT.seed_from_answer || this.variant === GAME_VARIANT.seed_from_answer_or_any) {
 			if (this.history.length > 0) {
 				seedPerson = this.history[this.history.length-1].nextAnswer;
 				if (this.isBlacklisted(seedPerson)) {
@@ -259,60 +255,73 @@ class Game{
 				seedPerson = this.pickNameFromTopFewCandidates();
 			}
 		} else {
-				throw `ERROR: invalid GAME_VARIANT: this.variant=${this.variant}: should be one of ${JSON.stringify(Object.keys(GAME_VARIANT))}`;
+			throw `ERROR: invalid GAME_VARIANT: this.variant=${this.variant}: should be one of ${JSON.stringify(Object.keys(GAME_VARIANT))}`;
 		}
 
-		return Promise.resolve( seedPerson )
-		.then( name => {
-			if (name === undefined) { return undefined; }
-			question.seedPerson = name;
+		return new Promise( (resolve, reject) => {
+				if(seedPerson === undefined){
+					debug('NO_VALID_SEEDPERSON');
+					reject('NO_VALID_SEEDPERSON');
+				}
 
-			return correlations_service.calcChainLengthsFrom(name)
+				correlations_service.calcChainLengthsFrom(seedPerson)
+					.then(chainLengths => resolve(chainLengths))
+					.catch(err => reject(err))
+				;
+			})
 			.then(chainLengths => {
+
 				if (chainLengths.length < 4) {
-					debug(`promiseNextCandidateQuestion: reject name=${name}: chainLengths.length(${chainLengths.length}) < 4`);
-					this.blacklistCandidate(question.seedPerson);
+					debug(`promiseNextCandidateQuestion: reject seedPerson=${seedPerson}: chainLengths.length(${chainLengths.length}) < 4`);
+					this.blacklistCandidate(seedPerson);
 					return this.promiseNextCandidateQuestion();
 				}
+
 				const nextAnswers = this.filterCandidates( chainLengths[1].entities );
 				if (nextAnswers.length === 0) {
-					debug(`promiseNextCandidateQuestion: reject name=${name}: nextAnswers.length === 0`);
-					this.blacklistCandidate(question.seedPerson);
+					debug(`promiseNextCandidateQuestion: reject name=${seedPerson}: nextAnswers.length === 0`);
+					this.blacklistCandidate(seedPerson);
 					return this.promiseNextCandidateQuestion();
 				}
+
 				question.nextAnswer = this.pickFromFirstFew( nextAnswers );
 				const wrongAnswers1 = this.filterCandidates( chainLengths[2].entities );
 				if (wrongAnswers1.length === 0) {
-					debug(`promiseNextCandidateQuestion: reject name=${name}: wrongAnswers1.length === 0`);
-					this.blacklistCandidate(question.seedPerson);
+					debug(`promiseNextCandidateQuestion: reject name=${seedPerson}: wrongAnswers1.length === 0`);
+					this.blacklistCandidate(seedPerson);
 					return this.promiseNextCandidateQuestion();
 				}
+
 				question.wrongAnswers.push( this.pickFromFirstFew( wrongAnswers1 ) );
 				const wrongAnswers2 = this.filterCandidates( chainLengths[3].entities );
 				if (wrongAnswers2.length === 0) {
-					debug(`promiseNextCandidateQuestion: reject name=${name}: wrongAnswers2.length === 0`);
-					this.blacklistCandidate(question.seedPerson);
+					debug(`promiseNextCandidateQuestion: reject name=${seedPerson}: wrongAnswers2.length === 0`);
+					this.blacklistCandidate(seedPerson);
 					return this.promiseNextCandidateQuestion();
 				}
+
+				question.seedPerson = seedPerson;
 				question.wrongAnswers.push( this.pickFromFirstFew( wrongAnswers2 ) );
 				// yay, means we have all the bits needed for a valid question
 				question.answersReturned = question.wrongAnswers.slice(0);
 				question.answersReturned.push(question.nextAnswer);
 				this.shuffle( question.answersReturned );
+
+				debug('qwert', question.seedPerson, question.nextAnswer);
+
 				return correlations_service.calcChainWithArticlesBetween(question.seedPerson, question.nextAnswer)
-				.then( data => {
-					question.linkingArticles = data.articlesPerLink[0];
-					return question;
-				})
-				.catch(err => {
-					debug(`promiseNextCandidateQuestion: Unable to fetch articles between ${question.seedPerson} and ${question.nextAnswer}`, err);
-					throw err;
-				})
+					.then( data => {
+						debug('DARA:', data);
+						debug(data.articlesPerLink);
+						debug(data.articlesPerLink[0]);
+						question.linkingArticles = data.articlesPerLink[0];
+						return question;
+					})
 				;
+
 			})
-			;
-		})
 		;
+
 	}
 
 	acceptQuestionData(qd){
@@ -341,7 +350,7 @@ class Game{
 
 	updateScoreStats() {
 		const score = this.distance;
-		return Game.updateGamesStats( stats => {
+		return Game.updateGamesStats( function(){
 			GAMES_STATS.counts.finished += 1;
 
 			if (! GAMES_STATS.scoreCounts.hasOwnProperty(score)) {
@@ -467,12 +476,10 @@ function getAQuestionToAnswer(gameUUID){
 	}
 
 	return Game.readFromDB(gameUUID)
-	.then(selectedGame => {
-		if(selectedGame === undefined){
-			throw `The game UUID '${gameUUID}' is not valid`;
-		}
-
-		return new Promise( (resolve, reject) => {
+		.then(selectedGame => {
+			if(selectedGame === undefined){
+				throw `The game UUID '${gameUUID}' is not valid`;
+			}
 
 			debug(`getAQuestionToAnswer: selectedGame=${JSON.stringify(selectedGame)}`);
 
@@ -481,75 +488,74 @@ function getAQuestionToAnswer(gameUUID){
 			}
 
 			if(selectedGame.state === 'finished'){
-				reject('GAMEOVER');
+				throw 'GAMEOVER';
 				return;
 			}
 
 			if(selectedGame.isQuestionSet){
-				resolve({
+				return {
 					seed : selectedGame.seedPerson,
 					options : selectedGame.answersReturned,
 					intervalDays : selectedGame.intervalDays,
 					questionNum : selectedGame.distance + 1,
 					globalHighestScore : GAMES_STATS.maxScore,
-				});
+				};
 			} else {
 				// if we are here, we need to pick our seed, nextAnswer, answersReturned
-				selectedGame.promiseNextCandidateQuestion()
-				.then(questionData => {
-					debug(`getAQuestionToAnswer: questionData=${JSON.stringify(questionData, null, 2)}`);
+				return selectedGame.promiseNextCandidateQuestion()
+					.then(questionData => {
+						debug(`getAQuestionToAnswer: questionData=${JSON.stringify(questionData, null, 2)}`);
 
-					if(questionData === undefined){
-						debug(`getAQuestionToAnswer: Game ${selectedGame.uuid} is out of connections`);
+						if(questionData === undefined){
+							debug(`getAQuestionToAnswer: Game ${selectedGame.uuid} is out of connections`);
 
-						selectedGame.finish()
-						.then( () => {
-							Game.writeToDB(selectedGame)
-							.then(function(){
-								debug(`getAQuestionToAnswer: Game state (${selectedGame.uuid}) successfully updated on completion.`);
-								resolve({
-									limitReached : true,
-									score        : selectedGame.distance,
-									history      : selectedGame.history,
-									achievedHighestScore     : selectedGame.achievedHighestScore,
-									achievedHighestScoreFirst: selectedGame.achievedHighestScoreFirst,
-									globalHighestScore : GAMES_STATS.maxScore,
-								});
-							})
-							.catch(err => {
-								debug(`getAQuestionToAnswer: Unable to save game state (${selectedGame.uuid}) at limit reached`, err);
-								throw err;
-							});
+							selectedGame.finish()
+								.then( () => {
+									return Game.writeToDB(selectedGame)
+										.then(function(){
+											debug(`getAQuestionToAnswer: Game state (${selectedGame.uuid}) successfully updated on completion.`);
+											return {
+												limitReached : true,
+												score        : selectedGame.distance,
+												history      : selectedGame.history,
+												achievedHighestScore     : selectedGame.achievedHighestScore,
+												achievedHighestScoreFirst: selectedGame.achievedHighestScoreFirst,
+												globalHighestScore : GAMES_STATS.maxScore,
+											};
+										})
+										.catch(err => {
+											debug(`getAQuestionToAnswer: Unable to save game state (${selectedGame.uuid}) at limit reached`, err);
+											throw err;
+										})
+									;
+								})
 							;
-						})
-						;
-					} else {
-						selectedGame.acceptQuestionData( questionData );
+						} else {
+							selectedGame.acceptQuestionData( questionData );
 
-						Game.writeToDB(selectedGame, process.env.GAME_TABLE)
-						.then(function(){
-							debug(`getAQuestionToAnswer: Game state (${selectedGame.uuid}) successfully updated on generation of answers.`);
-							resolve({
-								seed         : selectedGame.seedPerson,
-								options      : selectedGame.answersReturned,
-								limitReached : false,
-								intervalDays : selectedGame.intervalDays,
-								questionNum  : selectedGame.distance + 1,
-								globalHighestScore : GAMES_STATS.maxScore,
-							});
-						})
-						.catch(err => {
-							debug(`getAQuestionToAnswer: Unable to save game state whilst returning answers`, err);
-							throw err;
-						})
-						;
-					}
-				})
+							return Game.writeToDB(selectedGame, process.env.GAME_TABLE)
+								.then(function(){
+									debug(`getAQuestionToAnswer: Game state (${selectedGame.uuid}) successfully updated on generation of answers.`);
+									return {
+										seed         : selectedGame.seedPerson,
+										options      : selectedGame.answersReturned,
+										limitReached : false,
+										intervalDays : selectedGame.intervalDays,
+										questionNum  : selectedGame.distance + 1,
+										globalHighestScore : GAMES_STATS.maxScore,
+									};
+								})
+								.catch(err => {
+									debug(`getAQuestionToAnswer: Unable to save game state whilst returning answers`, err);
+									throw err;
+								})
+							;
+						}
+					})
 				;
 			}
+
 		})
-		;
-	})
 	;
 }
 
