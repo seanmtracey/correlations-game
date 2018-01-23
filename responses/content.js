@@ -52,7 +52,7 @@ function theAnswerGivenWasCorrect(articleData, newQuestion, people){
 
 	const basePhrase = `Correct! ${people.submitted.replace('people:', '')} was mentioned with ${people.seed.replace('people:', '')}`;
 
-	if (articleData === null) {
+	if (articleData === null || typeof articleData == 'undefined') {
 		const specificPhrase = `${basePhrase} in an FT article.`;
 		responseObj.displayText = specificPhrase;
 		responseObj.speech      = specificPhrase;
@@ -102,7 +102,7 @@ function theAnswerGivenWasNotCorrect(people, articleData, scoreData){
 
 	const basePhrase = `That was not the correct answer. ${people.expected.replace('people:', '')} was mentioned with ${people.seed.replace('people:', '')}`;
 
-	if (articleData === null) {
+	if (articleData === null || typeof articleData == 'undefined') {
 		const specificPhrase = `${basePhrase} in an FT article.`;
 		responseObj.displayText = specificPhrase;
 		responseObj.speech      = specificPhrase;
